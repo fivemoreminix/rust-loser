@@ -24,9 +24,7 @@ if_rule:
 
 use crate::lex::Token;
 
-pub trait ParseError {
-
-}
+pub trait ParseError {}
 
 pub trait Rule<T, TokE, E: ParseError> {
     type Product;
@@ -89,6 +87,7 @@ pub fn parse_rule<T, TokE, E, R>(tokens: &[Token<T, TokE>]) -> Result<R::Product
 #[cfg(test)]
 mod test {
     use utf8_read::StreamPosition;
+
     use crate::lex::Token;
     use crate::parse::{parse_rule, ParseContext, Rule};
 
@@ -135,8 +134,8 @@ mod test {
         }
 
         let tokens = vec![
-            Token {val: Ok(TokenKind::Plus), str: "+".to_owned(), pos: StreamPosition::new()},
-            Token {val: Ok(TokenKind::Minus), str: "-".to_owned(), pos: StreamPosition::new()},
+            Token { val: Ok(TokenKind::Plus), str: "+".to_owned(), pos: StreamPosition::new() },
+            Token { val: Ok(TokenKind::Minus), str: "-".to_owned(), pos: StreamPosition::new() },
         ];
 
         let product = parse_rule::<TokenKind, TokenError, ParseError, PlusMinusRule>(&tokens);

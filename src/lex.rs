@@ -1,4 +1,5 @@
-use std::io::{Read};
+use std::io::Read;
+
 use utf8_read::{Char, Error, Reader, StreamPosition};
 
 pub trait TokenError {
@@ -7,12 +8,12 @@ pub trait TokenError {
 
 pub enum Rule<S: Read, T, E: TokenError> {
     Static(String, T),
-    Custom(Box<dyn Fn(&str) -> bool>, Box<dyn Fn(&mut Token<T, E>, &mut Lexer<S, T, E>)>)
+    Custom(Box<dyn Fn(&str) -> bool>, Box<dyn Fn(&mut Token<T, E>, &mut Lexer<S, T, E>)>),
 }
 
 pub struct LexerRules<S: Read, T, E: TokenError> {
     pub is_whitespace: Box<dyn Fn(char) -> bool>,
-    pub rules: Vec<Rule<S, T, E>>
+    pub rules: Vec<Rule<S, T, E>>,
 }
 
 impl<'rules, S: Read, T, E: TokenError> LexerRules<S, T, E> {
@@ -120,7 +121,7 @@ impl<'rules, S: Read, T: Clone, E: TokenError> Lexer<'rules, S, T, E> {
                             break;
                         }
                     }
-                },
+                }
                 Err(ReadError::EOF) => if token.str.is_empty() {
                     return Err(ReadError::EOF);
                 } else {
@@ -181,7 +182,7 @@ mod tests {
                         Ok('\"') => {
                             token.str.push('\"');
                             break;
-                        },
+                        }
                         Ok(c) => token.str.push(c),
                         Err(_) => token.val = Err(Error::UnclosedQuotes),
                     }
@@ -190,7 +191,7 @@ mod tests {
 
         let lexer = Lexer::<_, Token, Error>::new(
             "++- invalid \"abc\" ".as_bytes(),
-            &rules
+            &rules,
         );
 
         let tokens = lexer.build_tokens();
