@@ -33,7 +33,7 @@ fn main() {
         .rule(String::from("mul"), Token::Mul)
         .rule(String::from("div"), Token::Div)
         .rule(String::from("ret"), Token::Ret)
-        .rule_custom(|s| s.chars().next().unwrap().is_alphabetic(), |builder| {
+        .rule_custom(|c| c.is_alphabetic(), |builder| {
             for (i, c) in builder.get_string().chars().enumerate() {
                 if !c.is_alphabetic() {
                     let mut tokens = Vec::new();
@@ -45,9 +45,9 @@ fn main() {
             vec![builder.token(0, builder.get_string().len(), Ok(Token::Identifier))]
         });
 
-    let source = "  mov eax ecx
-  mul eax ecx
-  mov rax eax
+    let source = "  mov eax, ecx
+  mul eax, ecx
+  mov rax, eax
 
   ret";
 

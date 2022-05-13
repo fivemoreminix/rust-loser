@@ -10,13 +10,13 @@ pub trait TokenError {
 #[derive(Debug, PartialEq)]
 enum Match {
     Full,
-    Possible,
+    Partial,
     None,
 }
 
 pub enum Rule<T, E: TokenError> {
     Static(String, T),
-    Custom(Box<dyn Fn(&str) -> bool>, Box<dyn Fn(TokenBuilder<T, E>) -> Vec<Token<T, E>>>),
+    Custom(Box<dyn Fn(char) -> bool>, Box<dyn Fn(TokenBuilder) -> Vec<Token<T, E>>>),
 }
 
 impl<T, E: TokenError> Rule<T, E> {
@@ -34,16 +34,17 @@ impl<T, E: TokenError> Rule<T, E> {
     /// If the rule matches the sequence, a Match::Full is returned. If there is no match then a
     /// Match::None is returned. If the rule is static, then a Match::Possible can be returned if
     /// the sequence provided forms the beginning part of the rule.
-    fn get_sequence_match(&self, seq: &str) -> Match {
+    fn get_sequence_match<S: AsRef<str>>(&self, seq: S) -> Match {
+        let seq = seq.as_ref();
         match self {
             Rule::Static(other, _) => if other == seq {
                 Match::Full
             } else if other.starts_with(seq) {
-                Match::Possible // TODO: consider removing the Match::Possible variant
+                Match::Partial // TODO: consider removing the Match::Partial variant
             } else {
                 Match::None
             },
-            Rule::Custom(test, _) => if (test)(seq) {
+            Rule::Custom(test, _) => if seq.chars().all(|c| (test)(c)) {
                 Match::Full
             } else {
                 Match::None
@@ -53,14 +54,14 @@ impl<T, E: TokenError> Rule<T, E> {
 }
 
 pub struct LexerRules<T, E: TokenError> {
-    pub is_whitespace: Box<dyn Fn(char) -> bool>,
+    pub is_skipped: Box<dyn Fn(char) -> bool>,
     pub rules: Vec<Rule<T, E>>,
 }
 
 impl<'rules, T, E: TokenError> LexerRules<T, E> {
-    pub fn with_whitespace(&mut self, func: impl Fn(char) -> bool + 'static) -> &mut Self
+    pub fn skips(&mut self, func: impl Fn(char) -> bool + 'static) -> &mut Self
     {
-        self.is_whitespace = Box::new(func);
+        self.is_skipped = Box::new(func);
         self
     }
 
@@ -71,8 +72,8 @@ impl<'rules, T, E: TokenError> LexerRules<T, E> {
 
     pub fn rule_custom<R, F>(&mut self, seq: R, builder: F) -> &mut Self
         where
-            R: 'static + Fn(&str) -> bool,
-            F: 'static + Fn(TokenBuilder<T, E>) -> Vec<Token<T, E>>
+            R: 'static + Fn(char) -> bool,
+            F: 'static + Fn(TokenBuilder) -> Vec<Token<T, E>>
     {
         self.rules.push(Rule::Custom(Box::new(seq), Box::new(builder)));
         self
@@ -84,25 +85,29 @@ impl<T, E: TokenError> LexerRules<T, E> {
         let seq = seq.as_ref();
         self.rules.iter().find(|r| match r {
             Rule::Static(rule_seq, _) => rule_seq == seq,
-            Rule::Custom(f, _) => (f)(seq),
+            Rule::Custom(test, _) => seq.chars().all(|c| (test)(c)),
         })
     }
 
-    pub fn get_static_match(&self, token: &Token<T, E>) -> Option<&Rule<T, E>> {
-        self.rules.iter().find(|rule|
-            rule.is_static() && rule.get_sequence_match(&token.str) == Match::Full)
+    pub fn get_static_match<S: AsRef<str>>(&self, seq: S) -> Option<&Rule<T, E>> {
+        let seq = seq.as_ref();
+        self.rules.iter().find(|rule| match rule {
+            Rule::Static(str, _) => str == seq,
+            _ => false,
+        })
     }
 
-    pub fn get_custom_match(&self, token: &Token<T, E>) -> Option<&Rule<T, E>> {
+    pub fn get_custom_match<S: AsRef<str>>(&self, seq: S) -> Option<&Rule<T, E>> {
+        let seq = seq.as_ref();
         self.rules.iter().find(|rule|
-            rule.is_custom() && rule.get_sequence_match(&token.str) == Match::Full)
+            rule.is_custom() && rule.get_sequence_match(seq) == Match::Full)
     }
 }
 
 impl<T, E: TokenError> Default for LexerRules<T, E> {
     fn default() -> Self {
         LexerRules {
-            is_whitespace: Box::new(char::is_whitespace),
+            is_skipped: Box::new(char::is_whitespace),
             rules: Vec::new(),
         }
     }
@@ -122,6 +127,10 @@ impl Pos {
     pub fn new() -> Pos {
         Pos { start: 0, line: 0, col: 0 }
     }
+
+    pub fn offset(&self, amt: usize) -> Self {
+        Pos { start: self.start + amt, line: self.line, col: self.col + amt }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -138,29 +147,28 @@ pub enum ReadError {
     IOError(Rc<std::io::Error>),
 }
 
-pub struct TokenBuilder<T, E> {
-    token: Token<T, E>,
+pub struct TokenBuilder {
+    str: String,
+    pos: Pos,
 }
 
-impl<T, E> TokenBuilder<T, E> {
-    pub fn new(token: Token<T, E>) -> Self {
-        TokenBuilder {
-            token
-        }
+impl TokenBuilder {
+    pub fn new(str: String, pos: Pos) -> Self {
+        TokenBuilder { str, pos }
     }
 
     pub fn get_string(&self) -> &str {
-        &self.token.str
+        &self.str
     }
 
     // Construct a new TokenBuilder by taking a substring. start is the index of the first character
     // and the end is the index after the last character to take. These form an exclusive range. A
     // val is also required to form the new underlying Token.
-    pub fn token(&self, start: usize, end: usize, val: Result<T, E>) -> Token<T, E> {
-        let pos = &self.token.pos;
+    pub fn token<T, E>(&self, start: usize, end: usize, val: Result<T, E>) -> Token<T, E> {
+        let pos = &self.pos;
         Token {
             val,
-            str: self.token.str[start..end].to_owned(),
+            str: self.str[start..end].to_owned(),
             pos: Pos {
                 start: pos.start + start,
                 line: pos.line,
@@ -207,66 +215,126 @@ impl<'rules, S: Read, T: Clone, E: TokenError> Lexer<'rules, S, T, E> {
         // use the first custom rule. If there is not a matching custom rule, produce the no matching
         // rule token.
 
-        let mut token = Token::<T, E> {
-            val: Err(E::no_matching_rule()),
-            str: String::new(),
-            pos: Pos::new(),
-        };
-        loop {
-            match self.next_char() {
-                Ok(c) => {
-                    let mut is_whitespace = false;
-                    if (self.rules.is_whitespace)(c) {
-                        if token.str.is_empty() {
-                            return Ok(Vec::new());
-                        }
-                        is_whitespace = true;
-                    } else {
-                        if token.str.is_empty() { // If first char pushed
-                            let pos = self.reader.borrow_pos();
-                            let (line, col) = pos.line_position();
-                            token.pos = Pos {
-                                start: pos.byte() - 2,
-                                line: line - 1,
-                                col: col - 3,
-                            };
-                        }
-                        token.str.push(c);
-                    }
+        let mut tokens = Vec::new();
 
-                    let static_match = self.rules.get_static_match(&token);
-                    if let Some(Rule::Static(_, val)) = static_match {
-                        token.val = Ok((*val).clone());
+        let (word, origin_pos, read_error) = self.next_word();
 
-                        let mut vec = Vec::with_capacity(1);
-                        vec.push(token);
-                        return Ok(vec);
-                    }
+        if word.is_empty() {
+            return Err(read_error.unwrap());
+        }
 
-                    // This gives the end of parsing a token (via whitespace acting as a delim)
-                    // to have a chance at finding a matching static rule for the token.
-                    if is_whitespace {
-                        break;
-                    }
-                }
-                Err(ReadError::EOF) => if token.str.is_empty() {
-                    return Err(ReadError::EOF);
-                } else {
-                    break;
-                },
-                Err(error) => return Err(error),
+        // Short circuit for words that are a complete and single rule
+        let rule = self.rules.get_matching_rule(&word);
+        if rule.is_some() {
+            return Ok(Self::build_tokens_for_rule(rule.unwrap(), &word, origin_pos));
+        }
+
+        // let mut static_rules_possible = false;
+        let mut start = 0usize; // Index of word's substring start char
+        let mut substr: &str = &word;
+        let mut current_pos = Pos::new();
+        let mut custom_match_previous = None;
+
+        for (i, c) in word.chars().enumerate() {
+            // peek a char
+            // if there are no static rules already we're building a full word
+            // so if this c doesn't match the func of any custom tester
+            // then we need to stop reading chars
+
+            substr = &word[start..=i];
+
+            if i - start == 0 { // If first char in a substr
+                current_pos = origin_pos.offset(i);
+            }
+
+            // Split the word into sub-words for custom rules when we find a character that does
+            // not meet the requirements of a previously available custom rule.
+            let custom_match = self.rules.get_custom_match(substr);
+            if custom_match_previous.is_some() && custom_match.is_none() {
+                tokens.append(&mut Self::build_tokens_for_rule(custom_match_previous.unwrap(), &word[start..i], current_pos.clone()));
+                start = i;
+                substr = &word[start..=i];
+                current_pos = origin_pos.offset(start);
+                custom_match_previous = None;
+            } else {
+                custom_match_previous = custom_match;
+            }
+
+            let static_match = self.rules.get_static_match(substr);
+            if static_match.is_some() {
+                tokens.append(&mut Self::build_tokens_for_rule(static_match.unwrap(), substr, current_pos.clone()));
+                return Ok(tokens);
             }
         }
 
-        let custom_match = self.rules.get_custom_match(&token);
-        if let Some(Rule::Custom(_, f)) = custom_match {
-            let tokens = (f)(TokenBuilder::new(token));
-            return Ok(tokens);
+        // Take the custom match since no static match could be found during the loop.
+        let custom_match = self.rules.get_custom_match(substr);
+        if custom_match.is_some() {
+            return Ok(Self::build_tokens_for_rule(custom_match.unwrap(), substr, current_pos));
         }
 
-        let mut vec = Vec::with_capacity(1);
-        vec.push(token);
-        Ok(vec)
+        tokens.push(Token {
+            val: Err(E::no_matching_rule()),
+            str: substr.to_owned(),
+            pos: current_pos,
+        });
+        Ok(tokens)
+    }
+
+    fn build_tokens_for_rule(rule: &Rule<T, E>, seq: &str, pos: Pos) -> Vec<Token<T, E>> {
+        match rule {
+            Rule::Static(_, val) => {
+                let token = Token {
+                    val: Ok((*val).clone()),
+                    str: seq.to_owned(),
+                    pos,
+                };
+                let mut vec = Vec::with_capacity(1);
+                vec.push(token);
+                vec
+            }
+            Rule::Custom(_, f) => {
+                (f)(TokenBuilder::new(seq.to_owned(), pos))
+            }
+        }
+    }
+
+    pub fn next_word(&mut self) -> (String, Pos, Option<ReadError>) {
+        let mut word = String::new();
+        let mut pos = Pos::new();
+
+        loop {
+            let c_result = self.next_char();
+
+            if let Err(err) = c_result {
+                return (word, pos, Some(err));
+            }
+
+            let c = unsafe { c_result.unwrap_unchecked() };
+
+            if (self.rules.is_skipped)(c) {
+                if word.is_empty() {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+
+            if word.is_empty() {
+                pos = {
+                    let spos = self.reader.borrow_pos();
+                    let (line, col) = spos.line_position();
+                    Pos {
+                        start: spos.byte() - 2,
+                        line: line - 1,
+                        col: col - 3,
+                    }
+                };
+            }
+
+            word.push(c);
+        }
+        (word, pos, None)
     }
 
     pub fn peek_char(&self) -> &Result<char, ReadError> {
@@ -318,7 +386,7 @@ mod tests {
         }
 
         let mut rules = LexerRules::default();
-        rules.with_whitespace(|c| c.is_whitespace())
+        rules.skips(|c| c.is_whitespace())
             .rule(String::from('+'), Token::Plus)
             .rule(String::from('-'), Token::Minus)
             .rule_custom(|s| s == "\"", |builder| {
