@@ -36,6 +36,7 @@ impl<T, E: TokenError> Rule<T, E> {
     /// the sequence provided forms the beginning part of the rule.
     fn get_sequence_match<S: AsRef<str>>(&self, seq: S) -> Match {
         let seq = seq.as_ref();
+        assert!(!seq.is_empty());
         match self {
             Rule::Static(other, _) => if other == seq {
                 Match::Full
@@ -78,9 +79,7 @@ impl<'rules, T, E: TokenError> LexerRules<T, E> {
         self.rules.push(Rule::Custom(Box::new(seq), Box::new(builder)));
         self
     }
-}
 
-impl<T, E: TokenError> LexerRules<T, E> {
     pub fn get_matching_rule<R: AsRef<str>>(&self, seq: R) -> Option<&Rule<T, E>> {
         let seq = seq.as_ref();
         self.rules.iter().find(|r| match r {
@@ -263,21 +262,28 @@ impl<'rules, S: Read, T: Clone, E: TokenError> Lexer<'rules, S, T, E> {
             let static_match = self.rules.get_static_match(substr);
             if static_match.is_some() {
                 tokens.append(&mut Self::build_tokens_for_rule(static_match.unwrap(), substr, current_pos.clone()));
-                return Ok(tokens);
+                start = i+1;
+                current_pos = origin_pos.offset(start);
             }
         }
 
-        // Take the custom match since no static match could be found during the loop.
-        let custom_match = self.rules.get_custom_match(substr);
-        if custom_match.is_some() {
-            return Ok(Self::build_tokens_for_rule(custom_match.unwrap(), substr, current_pos));
+        substr = &word[start..];
+
+        if !substr.is_empty() {
+            // Take the custom match since no static match could be found during the loop.
+            let custom_match = self.rules.get_custom_match(substr);
+            if custom_match.is_some() {
+                tokens.append(&mut Self::build_tokens_for_rule(custom_match.unwrap(), substr, current_pos));
+                return Ok(tokens);
+            }
+
+            tokens.push(Token {
+                val: Err(E::no_matching_rule()),
+                str: substr.to_owned(),
+                pos: current_pos,
+            });
         }
 
-        tokens.push(Token {
-            val: Err(E::no_matching_rule()),
-            str: substr.to_owned(),
-            pos: current_pos,
-        });
         Ok(tokens)
     }
 
