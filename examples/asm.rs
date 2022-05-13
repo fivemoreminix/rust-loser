@@ -10,6 +10,7 @@ enum Token {
     Ret,
     Identifier,
     Comma,
+    EOL,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -26,6 +27,8 @@ impl lex::TokenError for TokenError {
 fn main() {
     let mut rules = lex::LexerRules::<Token, TokenError>::default();
     rules
+        .skips(|c| c != '\n' && c.is_whitespace())
+        .rule(String::from('\n'), Token::EOL)
         .rule(String::from(","), Token::Comma)
         .rule(String::from("mov"), Token::Mov)
         .rule(String::from("add"), Token::Add)
