@@ -31,6 +31,9 @@ pub trait Rule<T, TokE, E: ParseError> {
     fn build(ctx: &mut ParseContext<T, TokE>) -> Result<Self::Product, E>;
 }
 
+// TODO: consider implementing the trait on a custom result type for bubbling errors up so
+// that they are pushed onto a vec that has a predefined size.
+
 // The data structure passed to rules to test their values. Should implement clone so that rules
 // can be tested without incurring much cost.
 #[derive(Debug, Clone)]
@@ -47,16 +50,38 @@ impl<'t, T, TokE> ParseContext<'t, T, TokE> {
         }
     }
 
-    pub fn expect_next<E>(&mut self, val: Result<T, TokE>, err: E) -> Result<(), E>
+    // pub fn take_tokens_until<F, E>(&mut self, cond: F, default: E) -> Result<Vec<&Token<T, TokE>>, E>
+    //     where
+    //         F: FnMut(&Token<T, TokE>) -> Option<Result<(), E>>
+    // {
+    //     let mut tokens = Vec::new();
+    //     loop {
+    //         match self.next_token() {
+    //             Some(tok) => match (cond)(tok) {
+    //                 Some(Ok(_)) => return Ok(tokens),
+    //                 Some(Err(e)) => return Err(e),
+    //                 None => tokens.push(tok),
+    //             },
+    //             _ => return Err(default),
+    //         }
+    //     }
+    // }
+
+    pub fn expect_token<E>(&mut self, vals: &[Result<T, TokE>], err: E) -> Result<&Token<T, TokE>, E>
         where
             T: PartialEq,
             TokE: PartialEq,
     {
-        let tok = self.next_token();
-        if tok.is_none() || unsafe { tok.unwrap_unchecked() }.val != val {
-            Err(err)
-        } else {
-            Ok(())
+        match self.next_token() {
+            Some(tok) => {
+                for val in vals {
+                    if &tok.val == val {
+                        return Ok(tok);
+                    }
+                }
+                Err(err)
+            },
+            _ => Err(err),
         }
     }
 
